@@ -1,6 +1,7 @@
 """Get data out of a given file, specificly the dice log file."""
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
 import os
 
 
@@ -23,7 +24,7 @@ def get_data_from_line(log_line):
     y_acc = raw_data[5]
     z_acc = raw_data[6]
 
-    return ([time, x_acc, y_acc, z_acc])
+    return (np.array([time, x_acc, y_acc, z_acc]))
 
 
 def get_data_from_file(log_file, lines_limit=0):
@@ -38,11 +39,27 @@ def get_data_from_file(log_file, lines_limit=0):
                 break
     else:
         for line in log_file:
-            file_data.append(get_data_from_line(line))
+            file_data.append(np.array(get_data_from_line(line)))
 
-    return file_data
+    return np.array(file_data)
+
+
+def seperate_throw_data(throw_data):
+    """Seperate throw data parsed by get_data using quite times."""
+    pass    
 
 log_path = "..\\..\\Dice Logger\\LoggerExe\\Log.txt"
 log_file = open(log_path, 'r')
 
-print(get_data_from_file(log_file, 5))
+data = get_data_from_file(log_file)
+
+# alpha = 0.9
+# beta = 1 - alpha
+# for index in range(len(data)-1):
+#     data[index+1] = data[index]*alpha + data[index+1]*beta
+
+data = data.T
+w = savgol_filter(data[1], 101, 3)
+plt.plot(data[0], data[1])
+plt.plot(data[0], w)
+plt.show()
