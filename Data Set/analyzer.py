@@ -44,7 +44,7 @@ def get_data_from_file(log_file, lines_limit=0):
     return np.array(file_data)
 
 
-def seperate_throw_data(throw_data, quiet_time=1., thres=7.5):
+def seperate_throw_data(throw_data, quiet_time=1.5, thres=7.5):
     """Seperate throw data parsed by get_data in the middle of quiet.
 
     Parameters
@@ -55,18 +55,15 @@ def seperate_throw_data(throw_data, quiet_time=1., thres=7.5):
             The time which defines how much quiet acc is a throw.
 
     """
+    filtered = savgol_filter(throw_data[1], 51, 2)
+    grad = np.gradient(filtered, throw_data[0])
+    grad_filtered = savgol_filter(grad, 101, 2)
+
     output = []
     temp_data = np.array([throw_data.T[0]])
-
-    print(throw_data.shape)
-    filtered = savgol_filter(throw_data[1], 51, 2)
-    dfiltered = (filtered[:-1]-filtered[1:]) / \
-        (throw_data[0][:-1]-throw_data[0][1:])
-    dfiltered = savgol_filter(dfiltered, 101, 2)
-
     time_passed = 0
     is_throw = False
-    for index, sample in enumerate(dfiltered):
+    for index, sample in enumerate(grad_filtered[:-1]):
         temp_data = np.append(temp_data, [throw_data.T[index]], axis=0)
 
         if (np.abs(sample) < thres):
@@ -85,7 +82,7 @@ def seperate_throw_data(throw_data, quiet_time=1., thres=7.5):
 
     output.append(temp_data)
 
-    return output, dfiltered, filtered
+    return output, grad_filtered, filtered
 
 log_path = "..\\..\\Dice Logger\\LoggerExe\\Log.txt"
 log_file = open(log_path, 'r')
@@ -94,10 +91,8 @@ data = get_data_from_file(log_file)
 
 data = data.T
 abfilter = np.copy(data.T)
-sep, df, fil = seperate_throw_data(data)
+sep, grad_filt, filt = seperate_throw_data(data)
 
-print(len(sep))
-# sep[0].T[1]
 f, (raw_plot, sep_plot, filt_plot) = plt.subplots(3, sharex=True)
 
 plt.grid()
@@ -105,8 +100,8 @@ plt.grid()
 for l in sep:
     sep_plot.plot(l.T[0], l.T[1])
 
-filt_plot.plot(data[0], fil)
-filt_plot.plot(data[0][1:], df)
+filt_plot.plot(data[0], filt)
+filt_plot.plot(data[0], grad_filt)
 
 raw_plot.plot(data[0], data[1])
 plt.show()
