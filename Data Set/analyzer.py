@@ -44,22 +44,79 @@ def get_data_from_file(log_file, lines_limit=0):
     return np.array(file_data)
 
 
-def seperate_throw_data(throw_data):
-    """Seperate throw data parsed by get_data using quite times."""
-    pass    
+def seperate_throw_data(throw_data, quiet_time=1., thres=7.5):
+    """Seperate throw data parsed by get_data in the middle of quiet.
+
+    Parameters
+        throw_data: np.ndarray
+            Throws accelerometer data in
+            the form of [time, acc_x, acc_y, acc_z]
+        quiet_time: float
+            The time which defines how much quiet acc is a throw.
+
+    """
+    output = []
+    temp_data = np.array([throw_data.T[0]])
+
+    print(throw_data.shape)
+    filtered = savgol_filter(throw_data[1], 51, 2)
+    dfiltered = (filtered[:-1]-filtered[1:]) / \
+        (throw_data[0][:-1]-throw_data[0][1:])
+    dfiltered = savgol_filter(dfiltered, 101, 2)
+
+    time_passed = 0
+    is_throw = False
+    for index, sample in enumerate(dfiltered):
+        temp_data = np.append(temp_data, [throw_data.T[index]], axis=0)
+
+        if (np.abs(sample) < thres):
+            time_passed += throw_data[0][index+1]-throw_data[0][index]
+
+            if (time_passed > quiet_time):
+                is_throw = True
+
+        else:
+            if (is_throw):
+                is_throw = False
+                output.append(temp_data)
+                temp_data = np.array([temp_data[-1]])
+                time_passed = 0
+            time_passed = 0
+
+    output.append(temp_data)
+
+    return output, dfiltered, filtered
 
 log_path = "..\\..\\Dice Logger\\LoggerExe\\Log.txt"
 log_file = open(log_path, 'r')
 
 data = get_data_from_file(log_file)
 
-# alpha = 0.9
-# beta = 1 - alpha
-# for index in range(len(data)-1):
-#     data[index+1] = data[index]*alpha + data[index+1]*beta
-
 data = data.T
-w = savgol_filter(data[1], 101, 3)
-plt.plot(data[0], data[1])
-plt.plot(data[0], w)
+abfilter = np.copy(data.T)
+sep, df, fil = seperate_throw_data(data)
+
+print(len(sep))
+# sep[0].T[1]
+f, (raw_plot, sep_plot, filt_plot) = plt.subplots(3, sharex=True)
+
+plt.grid()
+
+for l in sep:
+    sep_plot.plot(l.T[0], l.T[1])
+
+filt_plot.plot(data[0], fil)
+filt_plot.plot(data[0][1:], df)
+
+raw_plot.plot(data[0], data[1])
 plt.show()
+
+# alpha = 0.92
+# beta = 1 - alpha
+# for index in range(len(abfilter)-1):
+#     abfilter[index+1] = abfilter[index]*alpha + abfilter[index+1]*beta
+# abfilter = abfilter.T
+# filtered = abfilter[1]
+
+# plt.plot(data[0], filtered)
+# plt.plot(data[0][1:], df)
