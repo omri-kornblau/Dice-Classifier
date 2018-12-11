@@ -12,6 +12,7 @@ class LogDataSet(dict):
     # def __setitem__(self, key, item):
     #     dict.__setitem__(self, key, item)
 
+
     def get_data_from_line(self, log_line):
         """Get a string and return numpy array of numbers in it.
 
@@ -42,6 +43,7 @@ class LogDataSet(dict):
 
         return (np.array([time, x_acc, y_acc, z_acc]))
 
+
     def add_dataset_from_file(self, log_file, data_name, lines_limit=0):
         """Create ndarray object from accelerations log file.
 
@@ -60,6 +62,7 @@ class LogDataSet(dict):
                 file_data.append(self.get_data_from_line(line))
         self[data_name] = np.array(file_data).T
 
+
     def get_throw_data(self, data_name='throw', quiet_time=0.5, thres=50, filter_config=(3, 0.15)):
         """Get the data of a throw based on quiet times.
 
@@ -70,22 +73,23 @@ class LogDataSet(dict):
                 The time which defines how much quiet acc is a throw.
             thres: float
                 Max value of derivative quite time
+            filter_config: tupple
+                LP filter parameter set (for the method 'butter' in scipy.signal)
 
         """
         output = []
         b, a = signal.butter(*filter_config)
 
-        #filtered = signal.savgol_filter(self[data_name][1], 5, 3)
         zi = signal.lfilter_zi(b, a)
         z, _ = signal.lfilter(b, a, self[data_name][1], zi=zi*self[data_name][1][0])
-        #z2, _ = signal.lfilter(b, a, z, z[0])
+
         filtered = signal.filtfilt(b, a, self[data_name][1])
-        # print(self[data_name][0])
-        grad = np.gradient(filtered, self[data_name][0])
-        #grad = signal.savgol_filter(grad, 51, 3)
+        grad = np.gradient(filtered)#, self[data_name][0])
+
         temp_data = np.array([self[data_name].T[0]])
         time_counter = 0
         is_throw = False
+
         for index, sample in enumerate(grad[:-1]):
             temp_data = np.append(temp_data, [self[data_name].T[index]], axis=0)
 
