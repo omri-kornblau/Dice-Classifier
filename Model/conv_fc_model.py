@@ -1,6 +1,11 @@
+import matplotlib.pyplot as plt
 import tensorflow as tf
 import numpy as np
+import sys
 import os
+
+sys.path.insert(0, '../Data Set')
+import preprocess as prep
 
 # Disable some tf warnings
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -8,31 +13,61 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 sess = tf.InteractiveSession()
 
 # Data set params
-num_samples = 200
-num_train = 1000
-num_test = 200
-num_acc_axis = 3
-num_classes = 3
+num_samples = 10
+num_train = 130
+num_test = 60
+num_acc_axis = 4
+num_classes = 2
 
-# Make fake cube accelerations data
-label_data = np.random.randint(0, num_classes-1, num_train)
+root_dir = "..\\Data Set\\Throws\\"
+cd = lambda x: root_dir + x
 
-X_train = np.random.randn(num_train, num_samples, num_acc_axis)
-y_train = np.zeros([num_train, num_classes])
-y_train[range(num_train), label_data] = 1
+# Low_Elastic_Throw
+# Low_Hard_Throw
+# High_Hard_Throw
+# High_Elastic_Throw
+# Roll
+
+# Log files
+log_paths = [cd("Throws_#1.txt")]
+
+# Throw times files
+times_paths = [cd("Throws_Times_#1.txt")]
+
+X, y = prep.load_data_from_files(log_paths, times_paths, num_samples, graph=0, to_polar=True)
+
+print(X.shape)
+print(np.delete(X, 0, axis=2).shape)
+
+# input("press any key to continue...")
+print("Preprocess Finished!")
+
+# Seperate into training and test data
+X_train = X[:num_train]
+temp_y_train = y[:num_train]
+
+X_test = X[num_train:(num_train+num_test)]
+temp_y_test = y[num_train:(num_train+num_test)]
+
+# Format the label data as one hot
+y_train = np.zeros((num_train, num_classes))
+y_test = np.zeros((num_test, num_classes))
+
+y_train[range(num_train), temp_y_train] = 1
+y_test[range(num_test), temp_y_test] = 1
 
 # Training params
-learning_rate = 6e-4
-display_step = 50
-batch_size = 500
-maxiter = 500
+learning_rate = 1e-2
+display_step = 400
+batch_size = num_test
+maxiter = 10000
 
 # Net params
-n_conv_layer = 6
-stride = 2
-n_hidden_1 = 200
-n_hidden_2 = 300
+stride = 1
+n_conv_layer = 10
 n_conv_out = int(num_samples/stride)
+n_hidden_1 = 20
+n_hidden_2 = 10
 
 # Graph input
 X = tf.placeholder("float", [None, num_samples, num_acc_axis])
@@ -64,7 +99,7 @@ def neural_net(x):
 
     # Hidden fully connected layer with relu
     layer_2 = tf.add(tf.matmul(layer_1, weights['w2']), biases['b2'])
-    layer_2 = tf.nn.relu(layer_2)
+    scores = tf.nn.relu(layer_2)
 
     # Output fully connected layer with a neuron for each class
     scores = tf.add(tf.matmul(layer_2, weights['w3']), biases['b3'])
@@ -77,9 +112,10 @@ prediction = tf.nn.softmax(logits)
 
 # Define loss and optimizer
 loss_op = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-    logits=logits, labels=Y))
+    logits=logits,
+    labels=Y))
 
-optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+optimizer = tf.train.AdagradOptimizer(learning_rate=learning_rate)
 train_op = optimizer.minimize(loss_op)
 
 
@@ -93,8 +129,9 @@ train_writer = tf.summary.FileWriter("C:" + '/train', sess.graph)
 init_op = tf.global_variables_initializer()
 
 final_scores = 0
+losses = []
 
-# Training
+# Optimization
 with tf.Session() as sess:
     # Run initializer
     sess.run(init_op)
@@ -106,6 +143,7 @@ with tf.Session() as sess:
 
         # Run optimization op
         sess.run(train_op, feed_dict={X: X_batch, Y: y_batch})
+        losses.append(sess.run([loss_op], feed_dict = {X: X_batch, Y: y_batch}))
 
         if ((step % display_step == 0) or (step == 1)):
             # Calculate batch loss and accuracy
@@ -118,4 +156,14 @@ with tf.Session() as sess:
                 + ", Minibatch Loss= " + "{:.4f}".format(loss) \
                 + ", Minibatch accuracy= " + "{:.3f}".format(acc))
 
+    final_scores = sess.run(accuracy, feed_dict={X: X_test,
+                                      Y: y_test})
+
+    print(final_scores)
+    plt.plot(losses)
     print("Optimaztion Finished!")
+
+print("\n Final test score %f" %final_scores)
+
+plt.grid()
+plt.show()
