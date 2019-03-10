@@ -1,9 +1,99 @@
-from raw_data import LogDataSet
+from scipy import signal
+
 import matplotlib.pyplot as plt
 import numpy as np
+import files_handler
 import utils
+import os
 
-def create_ndarray_from_data (data, length):
+def get_throw_data(data, quiet_time=0.5, thres=50, filter_config=(3, 0.15), throw_times=[]):
+    """Get the data of a throw based on quiet times.
+
+    Parameters
+        data_name: string
+            name of the data set, from one of the datasets that where loaded.
+        quiet_time: float
+            Defines how long should a quiet time be to be considered as a rest after a throw.
+        thres: float
+            Max value of derivative quiet time.
+        filter_config: tuple
+            LP filter parameter set (for the method 'butter' in scipy.signal).
+        throw_times: list
+            User defined times to trim throws.
+
+    """
+    # Init var to store the final output (a list of the throws from the data)
+    output = []
+
+    # Filter data to get small derivatives
+    b, a = signal.butter(*filter_config)
+
+    zi = signal.lfilter_zi(b, a)
+    z, _ = signal.lfilter(b, a, data[1], zi=zi*data[1][0])
+
+    filtered = signal.filtfilt(b, a, data[1])
+
+    # Get the time derivative of the filtered data
+    grad = np.gradient(filtered)
+
+    # Init empty data buffer
+    temp_data = np.array([data.T[0]])
+    quiet_data = np.array([data.T[0]])
+
+    # Store the time period in which the data was quiet (small derivatives)
+    time_counter = 0
+
+    current_time = 0
+    throw_time_idx = 0
+    is_throw = False
+
+    for index, sample in enumerate(grad[:-1]):
+        current_time = data[0][index]
+
+        if (throw_time_idx < len(throw_times)):
+            if (current_time > throw_times[throw_time_idx]):
+                if (quiet_data.shape[0] > 0):
+                    quiet_data = np.array([quiet_data[-1]])
+                else:
+                    temp_data = np.array([temp_data[-1]])
+
+                throw_time_idx += 1
+
+
+        if (np.abs(sample) < thres):
+            if (quiet_data.shape[0] > 0):
+                quiet_data = np.append(quiet_data, [data.T[index]], axis=0)
+            else:
+                quiet_data = np.array([data.T[index]])
+
+            time_counter += data[0][index+1] - data[0][index]
+
+            if (time_counter > quiet_time):
+                quiet_data = np.array([])
+                is_throw = True
+
+        else:
+            if (is_throw):
+                is_throw = False
+                output.append(temp_data)
+                temp_data = np.array([])
+
+            if (quiet_data.shape[0] > 0):
+                temp_data = np.concatenate((temp_data, quiet_data), axis=0)
+                quiet_data = np.array([])
+
+            if (temp_data.shape[0] > 0):
+                temp_data = np.append(temp_data, [data.T[index]], axis=0)
+            else:
+                temp_data = np.array([data.T[index]])
+
+            time_counter = 0
+
+    output.append(temp_data)
+
+    return output, filtered, grad
+
+def create_fixed_length_data(data, length, label):
     """ Cut each one of the samples to a fixed length.
 
         Parameters
@@ -11,24 +101,32 @@ def create_ndarray_from_data (data, length):
                 the length of the samples
     """
     result = []
+    labels = []
+
     for (idx, example) in enumerate(data):
         if example.shape[0] > length:
             result.append(example[:length])
+            labels.append(label)
         else:
             print("Throw %d/%d (size: %d) dumped" % (idx, len(data)-1, example.shape[0]))
-    return np.array(result)
+    return result, labels
 
-def get_min_sub_size (data):
+def get_min_sub_size(data):
     data_sets_sizes = []
     for sub_data in data:
         data_sets_sizes.append(len(sub_data))
 
     return np.min(data_sets_sizes)
 
-def load_data_from_files(log_files_paths, times_files_paths, num_samples=100, graph=-1, to_polar=False):
-    raw_data = LogDataSet()
-
-    data = []
+def load_data_from_files(files_path, num_samples=50, graph=-1, to_polar=False):
+    name_to_num = {
+        'throw': 0,
+        'fakethrow': 1,
+        'idle': 2,
+        'hand': 3,
+    }
+    dataset = []
+    targets = []
 
     if (graph > -1):
         g_x = plt.subplot(411)
@@ -37,31 +135,60 @@ def load_data_from_files(log_files_paths, times_files_paths, num_samples=100, gr
 
         g_data = plt.subplot(414, sharex=g_x)
 
-    for index, log_path in enumerate(log_files_paths):
-        log_file = open(log_path, 'r')
+    for file_name in os.listdir(files_path):
+        name_split = file_name.split('_')
 
-        raw_data.add_dataset_from_file(log_file, index, to_polar=to_polar)
-        throw_times = utils.get_times_from_file(times_files_paths[index])
+        # Check if the file is in format (label_type_##.txt)
+        if (len(name_split) == 2):
+            print(file_name)
+            label_type = name_split[0]
 
-        throw_data, fil, dfil = raw_data.get_throw_data(
-            data_name=index,
-            thres=2,
-            filter_config=(1, 0.6),
-            throw_times=throw_times)
+            log_file = open(os.path.join(files_path, file_name), 'r')
 
-        data.append(create_ndarray_from_data(throw_data, num_samples))
+            temp_data = files_handler.get_data_from_file(log_file, to_polar=to_polar)
+            final_data = []
 
-        if (graph == index):
-            for x in throw_data:
-                g_x.plot(x.T[0], x.T[1])
-                g_x.grid(b=True, which='both', axis='both')
-                g_y.plot(x.T[0], x.T[2])
-                g_z.plot(x.T[0], x.T[3])
+            if label_type == 'throw' or label_type == 'fakethrow':
+                # Fetch the relevant times file for the throw
+                times_file_name = "%s_times_%s" % (label_type, name_split[1])
 
-    sub_size = get_min_sub_size(data)
+                with open(os.path.join(files_path, times_file_name), 'r') as times_file:
+                    throw_times = files_handler.get_times_from_file(times_file)
+
+                    final_data, fil, dfil = get_throw_data(
+                        data=temp_data,
+                        quiet_time=0.5,
+                        thres=5,
+                        filter_config=(1, 0.6),
+                        throw_times=throw_times)
+
+                    if (graph == int(name_split[1].split('.')[0])):
+                        g_data.plot(temp_data[0], temp_data[1])
+                        g_data.plot(temp_data[0], dfil)
+
+            elif label_type == 'idle' or label_type == 'hand':
+                pass
+
+            file_data, file_targets = create_fixed_length_data(
+                final_data,
+                num_samples,
+                name_to_num[label_type])
+
+            dataset += file_data
+            targets += file_targets
+
+            if (graph == int(name_split[1].split('.')[0])):
+                print(throw_times)
+                for x in final_data:
+                    g_x.plot(x.T[0], x.T[1])
+                    g_x.grid(b=True, which='both', axis='both')
+                    g_y.plot(x.T[0], x.T[2])
+                    g_z.plot(x.T[0], x.T[3])
+
+    sub_size = get_min_sub_size(dataset)
 
     y = np.array([], dtype=np.int32)
-    for index, sub_data in enumerate(data):
+    for index, sub_data in enumerate(dataset):
         temp_array = np.ones(sub_size, dtype=np.int32)*index
         y = np.concatenate((y, temp_array))
         sub_data = sub_data[:sub_size]
@@ -71,14 +198,14 @@ def load_data_from_files(log_files_paths, times_files_paths, num_samples=100, gr
 
     X = []
     for index in y:
-        X.append(data[index][0])
-        data[index] = np.delete(data[index], 0, axis=0)
+        X.append(dataset[index][0])
+        dataset[index] = np.delete(dataset[index], 0, axis=0)
 
     X = np.array(X)
 
     if (graph > -1):
-        g_data.plot(raw_data[graph][0], raw_data[graph][1])
-        g_data.plot(raw_data[graph][0], dfil)
         plt.show()
 
     return X, y
+
+load_data_from_files("./Throws", num_samples=15, graph=6, to_polar=False)
