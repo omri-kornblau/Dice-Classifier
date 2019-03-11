@@ -6,6 +6,19 @@ import files_handler
 import utils
 import os
 
+def get_cons_data(data, num_samples=50):
+    output = []
+    temp_data = []
+
+    for index, sample in enumerate(data.T):
+        if (index%num_samples == 0):
+            output.append(np.array(temp_data))
+            temp_data = []
+
+        temp_data.append(sample)
+
+    return output
+
 def get_throw_data(data, quiet_time=0.5, thres=50, filter_config=(3, 0.15), throw_times=[]):
     """Get the data of a throw based on quiet times.
 
@@ -93,7 +106,7 @@ def get_throw_data(data, quiet_time=0.5, thres=50, filter_config=(3, 0.15), thro
 
     return output, filtered, grad
 
-def create_fixed_length_data(data, length, label):
+def create_fixed_length_data(data, length, label, verbose=False):
     """ Cut each one of the samples to a fixed length.
 
         Parameters
@@ -103,12 +116,12 @@ def create_fixed_length_data(data, length, label):
     result = []
     labels = []
 
-    for (idx, example) in enumerate(data):
-        if example.shape[0] > length:
-            result.append(example[:length])
+    for (idx, sample) in enumerate(data):
+        if sample.shape[0] >= length:
+            result.append(np.delete(sample[len(sample)-length:], 0, 1))
             labels.append(label)
         else:
-            print("Throw %d/%d (size: %d) dumped" % (idx, len(data)-1, example.shape[0]))
+            if verbose: print("Throw %d/%d (size: %d) dumped" % (idx, len(data)-1, sample.shape[0]))
     return result, labels
 
 def get_min_sub_size(data):
@@ -121,9 +134,9 @@ def get_min_sub_size(data):
 def load_data_from_files(files_path, num_samples=50, graph=-1, to_polar=False):
     name_to_num = {
         'throw': 0,
-        'fakethrow': 1,
+        'hand': 1,
         'idle': 2,
-        'hand': 3,
+        'fakethrow': 3,
     }
     dataset = []
     targets = []
@@ -145,7 +158,7 @@ def load_data_from_files(files_path, num_samples=50, graph=-1, to_polar=False):
 
             log_file = open(os.path.join(files_path, file_name), 'r')
 
-            temp_data = files_handler.get_data_from_file(log_file, to_polar=to_polar)
+            raw_data = files_handler.get_data_from_file(log_file, to_polar=to_polar)
             final_data = []
 
             if label_type == 'throw' or label_type == 'fakethrow':
@@ -156,18 +169,20 @@ def load_data_from_files(files_path, num_samples=50, graph=-1, to_polar=False):
                     throw_times = files_handler.get_times_from_file(times_file)
 
                     final_data, fil, dfil = get_throw_data(
-                        data=temp_data,
+                        data=raw_data,
                         quiet_time=0.5,
-                        thres=5,
+                        thres=3,
                         filter_config=(1, 0.6),
                         throw_times=throw_times)
 
                     if (graph == int(name_split[1].split('.')[0])):
-                        g_data.plot(temp_data[0], temp_data[1])
-                        g_data.plot(temp_data[0], dfil)
+                        g_data.plot(raw_data[0], raw_data[1])
+                        g_data.plot(raw_data[0], dfil)
+                        for i in throw_times:
+                            g_x.axvline(x=i)
 
             elif label_type == 'idle' or label_type == 'hand':
-                pass
+                final_data = get_cons_data(raw_data, num_samples=num_samples)
 
             file_data, file_targets = create_fixed_length_data(
                 final_data,
@@ -178,34 +193,13 @@ def load_data_from_files(files_path, num_samples=50, graph=-1, to_polar=False):
             targets += file_targets
 
             if (graph == int(name_split[1].split('.')[0])):
-                print(throw_times)
                 for x in final_data:
                     g_x.plot(x.T[0], x.T[1])
                     g_x.grid(b=True, which='both', axis='both')
                     g_y.plot(x.T[0], x.T[2])
                     g_z.plot(x.T[0], x.T[3])
 
-    sub_size = get_min_sub_size(dataset)
-
-    y = np.array([], dtype=np.int32)
-    for index, sub_data in enumerate(dataset):
-        temp_array = np.ones(sub_size, dtype=np.int32)*index
-        y = np.concatenate((y, temp_array))
-        sub_data = sub_data[:sub_size]
-
-    np.random.seed(31)
-    np.random.shuffle(y)
-
-    X = []
-    for index in y:
-        X.append(dataset[index][0])
-        dataset[index] = np.delete(dataset[index], 0, axis=0)
-
-    X = np.array(X)
-
     if (graph > -1):
         plt.show()
 
-    return X, y
-
-load_data_from_files("./Throws", num_samples=15, graph=6, to_polar=False)
+    return np.array(dataset), np.array(targets)
